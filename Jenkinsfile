@@ -315,7 +315,7 @@ spec:
                             "<strong>${escapeHtml(label)}：</strong>${renderedValue}"
                         }.join(' &nbsp; - &nbsp; ')
 
-                        """<div style="background-color:#e8f5e9;border:1px solid #a5d6a7;border-radius:6px;padding:8px 12px;margin:6px 0;color:#1b5e20;max-width:100%;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;word-break:break-word;">${contents}</div>"""
+                        """<div style="background-color:#e8f5e9;border:1px solid #a5d6a7;border-radius:6px;padding:8px 12px;margin:6px 0;color:#1b5e20;width:100%;max-width:900px;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;word-break:break-word;">${contents}</div>"""
                     }.join('')
                 }
             }
