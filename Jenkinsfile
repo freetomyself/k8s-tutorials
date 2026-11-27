@@ -39,17 +39,24 @@ spec:
     }
 
     environment {
+        // 项目配置
         PROJECT_GIT_URL = 'https://github.com/freetomyself/k8s-tutorials.git'
-        PROXY_URL = 'http://192.168.1.9:7890'
         GO_SOURCE_DIR = 'helm-charts/hello-helm'
         GO_BINARY_NAME = 'main'
 
+        // 仅用于代理出网预检
+        PROXY_URL = 'http://192.168.1.9:7890'
+
+        // 流水线运行时信息
+        PROJECT_VERSION = ''
+        BUILD_IMAGE = ''
         PIPELINE_STARTED_EPOCH = ''
         BUILD_STARTED_AT = ''
         GIT_VERSION = ''
         GIT_COMMIT = ''
         GO_VERSION = ''
         GO_TARGET = ''
+        PROXY_CHECK_RESULT = '尚未执行'
     }
 
     stages {
@@ -66,18 +73,28 @@ spec:
                     env.PROJECT_VERSION = params.PROJECT_VERSION.trim()
                     env.BUILD_IMAGE = params.BUILD_IMAGE.trim()
 
-                    env.PIPELINE_STARTED_EPOCH = sh(
+                    // 先用局部变量计算时间，避免从 env 中读取到 null。
+                    def startEpoch = sh(
                         script: 'date +%s',
                         returnStdout: true
                     ).trim()
 
-                    env.BUILD_STARTED_AT = sh(
-                        script: "TZ=Asia/Shanghai date -d '@${env.PIPELINE_STARTED_EPOCH}' '+%Y-%m-%d %H:%M:%S %Z'",
+                    def startedAt = sh(
+                        script: "TZ=Asia/Shanghai date -d '@${startEpoch}' '+%Y-%m-%d %H:%M:%S %Z'",
                         returnStdout: true
                     ).trim()
 
+                    env.PIPELINE_STARTED_EPOCH = startEpoch
+                    env.BUILD_STARTED_AT = startedAt
+
                     currentBuild.displayName =
                         "#${env.BUILD_NUMBER} ${env.PROJECT_VERSION}"
+
+                    currentBuild.description =
+                        "项目版本=${env.PROJECT_VERSION} | " +
+                        "构建镜像=${env.BUILD_IMAGE} | " +
+                        "Agent=${env.NODE_NAME} | " +
+                        "开始=${env.BUILD_STARTED_AT}"
                 }
             }
         }
@@ -113,6 +130,19 @@ spec:
                     }
                 }
             }
+
+            post {
+                success {
+                    script {
+                        env.PROXY_CHECK_RESULT = '通过'
+                    }
+                }
+                failure {
+                    script {
+                        env.PROXY_CHECK_RESULT = '失败'
+                    }
+                }
+            }
         }
 
         stage('检出代码') {
@@ -124,7 +154,7 @@ spec:
             }
         }
 
-        stage('记录构建信息') {
+        stage('记录代码版本信息') {
             steps {
                 script {
                     env.GIT_VERSION = sh(
@@ -138,9 +168,9 @@ spec:
                     ).trim()
 
                     currentBuild.description =
-                        "项目版本=${env.PROJECT_VERSION} | Git版本=${env.GIT_VERSION} | " +
-                        "Commit=${env.GIT_COMMIT} | 构建镜像=${env.BUILD_IMAGE} | " +
-                        "Agent=${env.NODE_NAME} | 开始=${env.BUILD_STARTED_AT}"
+                        "${currentBuild.description} | " +
+                        "Git版本=${env.GIT_VERSION} | " +
+                        "Commit=${env.GIT_COMMIT}"
                 }
             }
         }
@@ -151,6 +181,7 @@ spec:
                     if (!fileExists("${env.GO_SOURCE_DIR}/main.go")) {
                         error "没有找到 Go 源码：${env.GO_SOURCE_DIR}/main.go"
                     }
+
                     echo "已找到 Go 源码：${env.GO_SOURCE_DIR}/main.go"
                 }
             }
@@ -171,11 +202,20 @@ spec:
                         ).trim()
 
                         currentBuild.description =
-                            "${currentBuild.description} | Go=${env.GO_VERSION} | 目标=${env.GO_TARGET}"
+                            "${currentBuild.description} | " +
+                            "Go=${env.GO_VERSION} | 目标=${env.GO_TARGET}"
                     }
 
                     dir(env.GO_SOURCE_DIR) {
-                        sh 'GO111MODULE=auto CGO_ENABLED=0 GOOS=linux go build -o main .'
+                        sh '''
+                            set -eu
+
+                            if [ -f go.mod ]; then
+                                CGO_ENABLED=0 GOOS=linux go build -o "$GO_BINARY_NAME" .
+                            else
+                                GO111MODULE=off CGO_ENABLED=0 GOOS=linux go build -o "$GO_BINARY_NAME" .
+                            fi
+                        '''
                     }
                 }
             }
@@ -205,9 +245,10 @@ spec:
                         returnStdout: true
                     ).trim()
 
-                    def startEpoch = env.PIPELINE_STARTED_EPOCH
-                        ? env.PIPELINE_STARTED_EPOCH.toLong()
-                        : endEpoch
+                    def savedStartEpoch = env.PIPELINE_STARTED_EPOCH?.trim()
+                    def startEpoch = savedStartEpoch
+                        ? savedStartEpoch.toLong()
+                        : (currentBuild.startTimeInMillis / 1000L) as long
 
                     def durationSeconds = Math.max(0, endEpoch - startEpoch)
 
@@ -216,9 +257,11 @@ spec:
                         .readLines()
                         .findAll { it.trim() }
 
+                    fields.add("代理预检=${env.PROXY_CHECK_RESULT}")
                     fields.add("结束=${endedAt}")
                     fields.add("耗时=${durationSeconds}s")
                     fields.add("结果=${currentBuild.currentResult ?: 'SUCCESS'}")
+                    fields.add("构建产物=${env.GO_SOURCE_DIR}/${env.GO_BINARY_NAME}")
 
                     def escapeHtml = { value ->
                         (value ?: '').toString()
