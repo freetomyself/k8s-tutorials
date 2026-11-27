@@ -96,17 +96,18 @@ spec:
 
                     def startEpoch =
                         (currentBuild.startTimeInMillis / 1000L) as long
+
                     def startedAt = sh(
                         script: "TZ=Asia/Shanghai date -d '@${startEpoch}' '+%Y-%m-%d %H:%M:%S %Z'",
                         returnStdout: true
                     ).trim()
 
-                    currentBuild.displayName =
-                        "#${env.BUILD_NUMBER} ${env.PROJECT_VERSION}"
-
                     def proxyDescription = params.USE_PROXY
                         ? env.PROXY_URL
                         : '未启用'
+
+                    currentBuild.displayName =
+                        "#${env.BUILD_NUMBER} ${env.PROJECT_VERSION}"
 
                     currentBuild.description =
                         "项目版本=${env.PROJECT_VERSION} | " +
@@ -178,26 +179,6 @@ spec:
             }
         }
 
-        stage('记录代码版本信息') {
-            steps {
-                script {
-                    def gitVersion = sh(
-                        script: 'git describe --tags --always',
-                        returnStdout: true
-                    ).trim()
-
-                    def commit = sh(
-                        script: 'git rev-parse HEAD',
-                        returnStdout: true
-                    ).trim()
-
-                    currentBuild.description =
-                        "${currentBuild.description} | " +
-                        "Git版本=${gitVersion} | Commit=${commit}"
-                }
-            }
-        }
-
         stage('确认项目文件') {
             steps {
                 script {
@@ -219,14 +200,8 @@ spec:
                             returnStdout: true
                         ).trim()
 
-                        def target = sh(
-                            script: 'printf "linux/%s" "$(go env GOARCH)"',
-                            returnStdout: true
-                        ).trim()
-
                         currentBuild.description =
-                            "${currentBuild.description} | " +
-                            "Go=${goVersion} | 目标=${target}"
+                            "${currentBuild.description} | Go=${goVersion}"
                     }
 
                     dir(env.GO_SOURCE_DIR) {
@@ -256,94 +231,92 @@ spec:
         }
     }
 
-            post {
-                always {
-                    script {
-                        container('golang') {
-                            def endEpoch = sh(
-                                script: 'date +%s',
-                                returnStdout: true
-                            ).trim().toLong()
-            
-                            def endedAt = sh(
-                                script: "TZ=Asia/Shanghai date -d '@${endEpoch}' '+%Y-%m-%d %H:%M:%S %Z'",
-                                returnStdout: true
-                            ).trim()
-            
-                            def startEpoch =
-                                (currentBuild.startTimeInMillis / 1000L) as long
-                            def durationSeconds = Math.max(0, endEpoch - startEpoch)
-            
-                            def info = [:]
-                            (currentBuild.description ?: '')
-                                .replace(' | ', '\n')
-                                .readLines()
-                                .each { field ->
-                                    def separator = field.indexOf('=')
-                                    if (separator > 0) {
-                                        def label = field.substring(0, separator)
-                                        def value = field.substring(separator + 1)
-                                        info[label] = value
-                                    }
-                                }
-            
-                            def escapeHtml = { value ->
-                                (value ?: '').toString()
-                                    .replace('&', '&amp;')
-                                    .replace('<', '&lt;')
-                                    .replace('>', '&gt;')
-                                    .replace('"', '&quot;')
-                                    .replace("'", '&#39;')
+    post {
+        always {
+            script {
+                container('golang') {
+                    def endEpoch = sh(
+                        script: 'date +%s',
+                        returnStdout: true
+                    ).trim().toLong()
+
+                    def endedAt = sh(
+                        script: "TZ=Asia/Shanghai date -d '@${endEpoch}' '+%Y-%m-%d %H:%M:%S %Z'",
+                        returnStdout: true
+                    ).trim()
+
+                    def startEpoch =
+                        (currentBuild.startTimeInMillis / 1000L) as long
+                    def durationSeconds = Math.max(0, endEpoch - startEpoch)
+
+                    def info = [:]
+                    (currentBuild.description ?: '')
+                        .replace(' | ', '\n')
+                        .readLines()
+                        .each { field ->
+                            def separator = field.indexOf('=')
+                            if (separator > 0) {
+                                def label = field.substring(0, separator)
+                                def value = field.substring(separator + 1)
+                                info[label] = value
                             }
-            
-                            def repository = info['仓库'] ?: '未知'
-                            def repositoryEscaped = escapeHtml(repository)
-                            def repositoryHtml = repository ==~ /^https?:\/\/.+/
-                                ? """<a href="${repositoryEscaped}">${repositoryEscaped}</a>"""
-                                : repositoryEscaped
-            
-                            def rows = [
-                                [
-                                    ['项目版本', info['项目版本'] ?: '未知'],
-                                    ['构建镜像', info['构建镜像'] ?: '未知']
-                                ],
-                                [
-                                    ['仓库', repository]
-                                ],
-                                [
-                                    ['代理', info['代理'] ?: '未启用'],
-                                    ['代理预检', info['代理预检'] ?: '未执行']
-                                ],
-                                [
-                                    ['环境', info['Go'] ?: '未编译']
-                                ],
-                                [
-                                    ['结果', currentBuild.currentResult ?: 'SUCCESS'],
-                                    ['开始', info['开始'] ?: '未知'],
-                                    ['结束', endedAt],
-                                    ['耗时', "${durationSeconds}s"]
-                                ],
-                                [
-                                    ['构建产物', "${env.GO_SOURCE_DIR}/${env.GO_BINARY_NAME}"]
-                                ]
-                            ]
-            
-                            currentBuild.description = rows.collect { row ->
-                                def contents = row.collect { item ->
-                                    def label = item[0]
-                                    def value = item[1]
-            
-                                    def renderedValue = label == '仓库'
-                                        ? repositoryHtml
-                                        : escapeHtml(value)
-            
-                                    "<strong>${escapeHtml(label)}：</strong>${renderedValue}"
-                                }.join(' &nbsp; - &nbsp; ')
-            
-                                """<div style="background-color:#e8f5e9;border:1px solid #a5d6a7;border-radius:6px;padding:8px 12px;margin:6px 0;color:#1b5e20;">${contents}</div>"""
-                            }.join('')
                         }
+
+                    def escapeHtml = { value ->
+                        (value ?: '').toString()
+                            .replace('&', '&amp;')
+                            .replace('<', '&lt;')
+                            .replace('>', '&gt;')
+                            .replace('"', '&quot;')
+                            .replace("'", '&#39;')
                     }
+
+                    def repository = info['仓库'] ?: '未知'
+                    def repositoryEscaped = escapeHtml(repository)
+                    def repositoryHtml = repository ==~ /^https?:\/\/.+/
+                        ? """<a href="${repositoryEscaped}">${repositoryEscaped}</a>"""
+                        : repositoryEscaped
+
+                    def rows = [
+                        [
+                            ['项目版本', info['项目版本'] ?: '未知'],
+                            ['构建镜像', info['构建镜像'] ?: '未知']
+                        ],
+                        [
+                            ['仓库', repository]
+                        ],
+                        [
+                            ['代理', info['代理'] ?: '未启用'],
+                            ['代理预检', info['代理预检'] ?: '未执行']
+                        ],
+                        [
+                            ['环境', info['Go'] ?: '未编译']
+                        ],
+                        [
+                            ['结果', currentBuild.currentResult ?: 'SUCCESS'],
+                            ['开始', info['开始'] ?: '未知'],
+                            ['结束', endedAt],
+                            ['耗时', "${durationSeconds}s"]
+                        ],
+                        [
+                            ['构建产物', "${env.GO_SOURCE_DIR}/${env.GO_BINARY_NAME}"]
+                        ]
+                    ]
+
+                    currentBuild.description = rows.collect { row ->
+                        def contents = row.collect { item ->
+                            def label = item[0]
+                            def value = item[1]
+
+                            def renderedValue = label == '仓库'
+                                ? repositoryHtml
+                                : escapeHtml(value)
+
+                            "<strong>${escapeHtml(label)}：</strong>${renderedValue}"
+                        }.join(' &nbsp; - &nbsp; ')
+
+                        """<div style="background-color:#e8f5e9;border:1px solid #a5d6a7;border-radius:6px;padding:8px 12px;margin:6px 0;color:#1b5e20;">${contents}</div>"""
+                    }.join('')
                 }
             }
         }
