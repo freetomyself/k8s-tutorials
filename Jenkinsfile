@@ -43,16 +43,22 @@ spec:
             description: '项目 Git 仓库地址'
         )
 
+        booleanParam(
+            name: 'USE_PROXY',
+            defaultValue: false,
+            description: '选中后，流水线步骤使用代理'
+        )
+
         string(
             name: 'PROXY_URL',
             defaultValue: 'http://192.168.1.9:7890',
-            description: '代理地址'
+            description: '代理地址；仅勾选 USE_PROXY 时使用'
         )
 
         string(
             name: 'GO_SOURCE_DIR',
             defaultValue: 'helm-charts/hello-helm',
-            description: 'Go 源码目录，目录中应有 main.go'
+            description: '包含 main.go 的 Go 源码目录'
         )
 
         string(
@@ -69,6 +75,15 @@ spec:
         PROXY_URL = "${params.PROXY_URL?.trim() ?: 'http://192.168.1.9:7890'}"
         GO_SOURCE_DIR = "${params.GO_SOURCE_DIR?.trim() ?: 'helm-charts/hello-helm'}"
         GO_BINARY_NAME = "${params.GO_BINARY_NAME?.trim() ?: 'main'}"
+
+        HTTP_PROXY = "${params.USE_PROXY ? (params.PROXY_URL?.trim() ?: 'http://192.168.1.9:7890') : ''}"
+        HTTPS_PROXY = "${params.USE_PROXY ? (params.PROXY_URL?.trim() ?: 'http://192.168.1.9:7890') : ''}"
+        http_proxy = "${params.USE_PROXY ? (params.PROXY_URL?.trim() ?: 'http://192.168.1.9:7890') : ''}"
+        https_proxy = "${params.USE_PROXY ? (params.PROXY_URL?.trim() ?: 'http://192.168.1.9:7890') : ''}"
+        ALL_PROXY = "${params.USE_PROXY ? (params.PROXY_URL?.trim() ?: 'http://192.168.1.9:7890') : ''}"
+        all_proxy = "${params.USE_PROXY ? (params.PROXY_URL?.trim() ?: 'http://192.168.1.9:7890') : ''}"
+        NO_PROXY = ''
+        no_proxy = ''
     }
 
     stages {
@@ -89,10 +104,15 @@ spec:
                     currentBuild.displayName =
                         "#${env.BUILD_NUMBER} ${env.PROJECT_VERSION}"
 
+                    def proxyDescription = params.USE_PROXY
+                        ? env.PROXY_URL
+                        : '未启用'
+
                     currentBuild.description =
                         "项目版本=${env.PROJECT_VERSION} | " +
                         "构建镜像=${env.BUILD_IMAGE} | " +
                         "仓库=${env.PROJECT_GIT_URL} | " +
+                        "代理=${proxyDescription} | " +
                         "Agent=${env.NODE_NAME} | " +
                         "开始=${startedAt}"
                 }
@@ -101,36 +121,43 @@ spec:
 
         stage('代理出网预检') {
             steps {
-                container('golang') {
-                    sh '''
-                        set -eu
+                script {
+                    if (params.USE_PROXY) {
+                        container('golang') {
+                            sh '''
+                                set -eu
 
-                        if ! command -v curl >/dev/null 2>&1; then
-                            echo '当前构建镜像没有安装 curl，无法执行代理预检'
-                            exit 1
-                        fi
+                                if ! command -v curl >/dev/null 2>&1; then
+                                    echo '当前构建镜像没有安装 curl，无法执行代理预检'
+                                    exit 1
+                                fi
 
-                        for url in 'https://www.google.com/generate_204' 'https://github.com/'; do
-                            if curl --proxy "$PROXY_URL" --noproxy "" \
-                                --fail --silent --show-error --location \
-                                --connect-timeout 5 --max-time 15 \
-                                --output /dev/null "$url"; then
-                                echo "代理出网正常：$url"
-                                exit 0
-                            fi
-                        done
+                                for url in 'https://www.google.com/generate_204' 'https://github.com/'; do
+                                    if curl --proxy "$PROXY_URL" --noproxy "" \
+                                        --fail --silent --show-error --location \
+                                        --connect-timeout 5 --max-time 15 \
+                                        --output /dev/null "$url"; then
+                                        echo "代理出网正常：$url"
+                                        exit 0
+                                    fi
+                                done
 
-                        echo '通过代理访问测试站点失败'
-                        exit 1
-                    '''
+                                echo '通过代理访问测试站点失败'
+                                exit 1
+                            '''
+                        }
+                    } else {
+                        echo '未启用代理，跳过代理出网预检'
+                    }
                 }
             }
 
             post {
                 success {
                     script {
+                        def status = params.USE_PROXY ? '通过' : '已跳过'
                         currentBuild.description =
-                            "${currentBuild.description} | 代理预检=通过"
+                            "${currentBuild.description} | 代理预检=${status}"
                     }
                 }
                 failure {
